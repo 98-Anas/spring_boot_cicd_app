@@ -4,7 +4,8 @@ WORKDIR /app
 COPY pom.xml .
 RUN mvn dependency:go-offline -B  # Cache dependencies
 COPY src ./src
-RUN mvn package -DskipTests
+RUN mvn package -DskipTests \
+    -DargLine="--add-opens jdk.compiler/com.sun.tools.javac.processing=ALL-UNNAMED"
 
 # Stage 2: Lean Runtime Image
 FROM eclipse-temurin:17-jre-jammy
