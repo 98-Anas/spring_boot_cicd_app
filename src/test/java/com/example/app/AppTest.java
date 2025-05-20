@@ -1,4 +1,4 @@
-package org.rest.jpa.h2.example;
+package com.example.app;
 
 import junit.framework.Test;
 import junit.framework.TestCase;
