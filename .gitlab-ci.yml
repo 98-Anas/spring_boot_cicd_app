@@ -14,14 +14,11 @@ variables:
   DOCKER_DRIVER: overlay2
   MAVEN_OPTS: "-Dmaven.repo.local=.m2/repository -Dmaven.artifact.threads=8"
   MAVEN_CLI_OPTS: "--batch-mode --no-transfer-progress"
-  SAST_DISABLE_DIND: "true"
 
 stages:
   - build
   - test
-  - dependency_scan
-  - sast
-  - container_scan
+  - security
   - deploy
 
 cache:
@@ -59,37 +56,32 @@ test:
   tags:
     - dockerExec
 
-# Include GitLab's SAST template
+# Include all security scanning templates
 include:
   - template: Security/SAST.gitlab-ci.yml
+  - template: Security/Dependency-Scanning.gitlab-ci.yml
+  - template: Security/Container-Scanning.gitlab-ci.yml
 
-dependency_scanning:
-  stage: dependency_scan
+# Configure security jobs
+sast:
+  stage: security
   needs: ["build"]
-  image: owasp/dependency-check:latest
-  script:
-    - dependency-check.sh --project "$CI_PROJECT_NAME" --scan . --format "ALL" --out "dependency-check-report"
-  artifacts:
-    when: always
-    reports:
-      dependency_scanning: dependency-check-report/dependency-check-report.xml
-    paths:
-      - dependency-check-report/
-    expire_in: 1 week
-  allow_failure: true
+  variables:
+    SAST_EXCLUDED_ANALYZERS: "brakeman,nodejs-scan,eslint,gosec,flawfinder,security-code-scan"
   tags:
     - dockerExec
 
-# Include GitLab's Container Scanning template
-include:
-  - template: Security/Container-Scanning.gitlab-ci.yml
+dependency_scanning:
+  stage: security
+  needs: ["build"]
+  tags:
+    - dockerExec
 
 container_scanning:
+  stage: security
   variables:
     DOCKER_IMAGE: $DOCKER_TAG
-    CS_DISABLE_DIND: "false"
   needs: ["build"]
-  allow_failure: true
   tags:
     - dockerExec
 
@@ -98,8 +90,8 @@ deploy:
   needs:
     - job: test
       artifacts: true
-    - job: dependency_scanning
     - job: sast
+    - job: dependency_scanning
     - job: container_scanning
   image: docker:24.0
   services:
