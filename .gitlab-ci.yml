@@ -13,10 +13,8 @@ variables:
   DOCKER_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
   MAVEN_OPTS: "-Dmaven.repo.local=.m2/repository"
   MAVEN_CLI_OPTS: "--batch-mode --no-transfer-progress"
-  # Container scanning variables
   CS_IMAGE: $DOCKER_TAG
   CS_DOCKERFILE_PATH: "Dockerfile"
-  SECURE_LOG_LEVEL: "debug"
 
 stages:
   - build
@@ -34,7 +32,9 @@ cache:
 
 build:
   stage: build
-  image: maven:3.9.6-eclipse-temurin-17
+  before_script:
+    - apk add --no-cache maven openjdk17
+    - until docker info; do sleep 1; done
   script:
     - mvn clean package -DskipTests
     - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
@@ -51,6 +51,9 @@ build:
 test:
   stage: test
   image: maven:3.9.6-eclipse-temurin-17
+  variables:
+    DOCKER_HOST: ""
+    DOCKER_TLS_CERTDIR: ""
   script:
     - mvn test
   artifacts:
@@ -91,11 +94,6 @@ container_scanning:
 
 deploy:
   stage: deploy
-  image: docker:24.0
-  services:
-    - docker:24.0-dind
-  variables:
-    DOCKER_TLS_CERTDIR: ""
   before_script:
     - until docker info; do sleep 1; done
     - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin $CI_REGISTRY
