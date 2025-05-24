@@ -24,6 +24,8 @@ build:
     - docker build -t $DOCKER_TAG .
     - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
     - docker push $DOCKER_TAG
+  tags:
+    - dockerExec
 
 # Run tests (skipped in Docker build)
 test:
@@ -31,6 +33,8 @@ test:
   image: maven:3.8.6-eclipse-temurin-17
   script:
     - mvn test
+  tags:
+    - dockerExec
 
 # Security scans (Trivy for both dependencies & container)
 scan:
@@ -39,6 +43,8 @@ scan:
   script:
     - trivy fs --security-checks vuln,config .  # Dependency scan
     - trivy image --exit-code 0 --ignore-unfixed $DOCKER_TAG  # Container scan
+  tags:
+    - dockerExec
 
 # Deploy to a server (example using Docker)
 deploy:
@@ -47,3 +53,5 @@ deploy:
     - main
   script:
     - ssh $SERVER_USER@$SERVER_IP "docker pull $DOCKER_TAG && docker run -d -p 8080:8080 $DOCKER_TAG"
+  tags:
+    - dockerExec
