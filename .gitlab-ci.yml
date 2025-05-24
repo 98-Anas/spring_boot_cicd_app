@@ -56,15 +56,18 @@ scan:
   stage: scan
   image: docker:24.0
   before_script:
-    # Install Trivy using the official installation method
+    # Install Trivy
     - wget https://github.com/aquasecurity/trivy/releases/download/v0.49.1/trivy_0.49.1_Linux-64bit.tar.gz
     - tar -xzf trivy_0.49.1_Linux-64bit.tar.gz
     - mv trivy /usr/local/bin/
+    # Login to registry and pull image for scanning
     - until docker info; do sleep 1; done
+    - echo $CI_REGISTRY_PASSWORD | docker login -u $CI_REGISTRY_USER --password-stdin $CI_REGISTRY
+    - docker pull $DOCKER_TAG
   script:
     # Filesystem scan
     - trivy fs --security-checks vuln,config .
-    # Image scan (using the local image)
+    # Image scan (using the pulled image)
     - trivy image --exit-code 0 --ignore-unfixed $DOCKER_TAG
   dependencies:
     - build
