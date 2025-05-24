@@ -33,12 +33,9 @@ build:
   before_script:
     - until docker info; do sleep 1; done
   script:
-    - docker build \
-        --build-arg MAVEN_OPTS="$MAVEN_OPTS" \
-        --build-arg MAVEN_CLI_OPTS="$MAVEN_CLI_OPTS" \
-        -t $DOCKER_TAG .
-    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
-    - docker push "$DOCKER_TAG"
+    - docker build -t $DOCKER_TAG .
+    - echo $CI_REGISTRY_PASSWORD | docker login -u $CI_REGISTRY_USER --password-stdin $CI_REGISTRY
+    - docker push $DOCKER_TAG
   tags:
     - dockerExec
 
