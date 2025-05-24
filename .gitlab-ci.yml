@@ -54,11 +54,17 @@ test:
 
 scan:
   stage: scan
-  image:
+  image: 
     name: aquasec/trivy:latest
-    entrypoint: [""]  # Disable the default entrypoint
+    entrypoint: [""]
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+  before_script:
+    - until docker info; do sleep 1; done
   script:
+    # Filesystem scan
     - trivy fs --security-checks vuln,config .
+    # Image scan (using the pushed image from registry)
     - trivy image --exit-code 0 --ignore-unfixed $DOCKER_TAG
   dependencies:
     - build
