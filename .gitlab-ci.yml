@@ -13,6 +13,10 @@ variables:
   DOCKER_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
   MAVEN_OPTS: "-Dmaven.repo.local=.m2/repository"
   MAVEN_CLI_OPTS: "--batch-mode --no-transfer-progress"
+  # Container scanning variables
+  CS_IMAGE: $DOCKER_TAG
+  CS_DOCKERFILE_PATH: "Dockerfile"
+  SECURE_LOG_LEVEL: "debug"
 
 stages:
   - build
@@ -33,9 +37,14 @@ build:
   image: maven:3.9.6-eclipse-temurin-17
   script:
     - mvn clean package -DskipTests
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    - docker build -t $DOCKER_TAG .
+    - docker push $DOCKER_TAG
   artifacts:
     paths:
       - target/
+    reports:
+      dotenv: build.env
   tags:
     - dockerExec
 
@@ -50,26 +59,21 @@ test:
   tags:
     - dockerExec
 
-# Include GitLab security templates
 include:
   - template: Security/SAST.gitlab-ci.yml
   - template: Security/Dependency-Scanning.gitlab-ci.yml
   - template: Security/Container-Scanning.gitlab-ci.yml
 
-# Configure included templates
 sast:
   stage: sast
   variables:
     SAST_EXCLUDED_ANALYZERS: "brakeman,nodejs-scan,eslint,gosec,flawfinder,security-code-scan"
-    SEARCH_MAX_DEPTH: 10
   needs: ["build"]
   tags:
     - dockerExec
 
 dependency_scanning:
   stage: dependency_scan
-  variables:
-    DS_EXCLUDED_ANALYZERS: "gemnasium-maven,retire.js" # Keep only Java-relevant analyzers
   needs: ["build"]
   tags:
     - dockerExec
@@ -77,8 +81,11 @@ dependency_scanning:
 container_scanning:
   stage: container_scan
   variables:
-    DOCKER_IMAGE: $DOCKER_TAG
+    CS_IMAGE: $DOCKER_TAG
+    CS_DOCKERFILE_PATH: "Dockerfile"
   needs: ["build"]
+  before_script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
   tags:
     - dockerExec
 
@@ -93,7 +100,8 @@ deploy:
     - until docker info; do sleep 1; done
     - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin $CI_REGISTRY
   script:
-    - docker build -t $CI_REGISTRY_IMAGE:latest .
+    - docker pull $DOCKER_TAG
+    - docker tag $DOCKER_TAG $CI_REGISTRY_IMAGE:latest
     - docker push $CI_REGISTRY_IMAGE:latest
     - docker stop spring-app || true
     - docker rm spring-app || true
