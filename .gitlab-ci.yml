@@ -1,15 +1,17 @@
 image: docker:24.0
+
 services:
   - name: docker:24.0-dind
-    command: ["--tls=false"]
+    command: ["--tls=false", "--host=tcp://0.0.0.0:2375"]
     alias: docker
     variables:
       DOCKER_TLS_CERTDIR: ""
       DOCKER_HOST: tcp://docker:2375
 
 variables:
-  DOCKER_BUILDKIT: 1  # Faster builds
+  DOCKER_BUILDKIT: 1
   DOCKER_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
+  DOCKER_DRIVER: overlay2
 
 stages:
   - build
@@ -17,22 +19,23 @@ stages:
   - scan
   - deploy
 
-# Cache Maven dependencies for faster builds
+before_script:
+  - until docker info; do sleep 1; done  # Wait for Docker daemon
+
 cache:
   paths:
     - .m2/repository
 
-# Build & push Docker image
 build:
   stage: build
   script:
+    - docker info  # Verify Docker connection
     - docker build -t $DOCKER_TAG .
-    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u $CI_REGISTRY_USER --password-stdin $CI_REGISTRY
     - docker push $DOCKER_TAG
   tags:
     - dockerExec
 
-# Run tests (skipped in Docker build)
 test:
   stage: test
   image: maven:3.8.6-eclipse-temurin-17
@@ -41,17 +44,15 @@ test:
   tags:
     - dockerExec
 
-# Security scans (Trivy for both dependencies & container)
 scan:
   stage: scan
   image: aquasec/trivy:latest
   script:
-    - trivy fs --security-checks vuln,config .  # Dependency scan
-    - trivy image --exit-code 0 --ignore-unfixed $DOCKER_TAG  # Container scan
+    - trivy fs --security-checks vuln,config .
+    - trivy image --exit-code 0 --ignore-unfixed $DOCKER_TAG
   tags:
     - dockerExec
 
-# Deploy to a server (example using Docker)
 deploy:
   stage: deploy
   only:
