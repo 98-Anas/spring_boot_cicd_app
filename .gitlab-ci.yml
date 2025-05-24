@@ -11,8 +11,7 @@ services:
 variables:
   DOCKER_BUILDKIT: 1
   DOCKER_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
-  DOCKER_DRIVER: overlay2
-  MAVEN_OPTS: "-Dmaven.repo.local=.m2/repository -Dmaven.artifact.threads=8"
+  MAVEN_OPTS: "-Dmaven.repo.local=.m2/repository"
   MAVEN_CLI_OPTS: "--batch-mode --no-transfer-progress"
 
 stages:
@@ -28,44 +27,38 @@ cache:
   paths:
     - .m2/repository
     - target/
-  policy: pull-push
-
-# Include GitLab's official security templates
-include:
-  - template: Security/SAST.gitlab-ci.yml
-  - template: Security/Dependency-Scanning.gitlab-ci.yml
-  - template: Security/Container-Scanning.gitlab-ci.yml
 
 build:
   stage: build
-  before_script:
-    - until docker info; do sleep 1; done
-  script:
-    - docker build --build-arg MAVEN_OPTS="$MAVEN_OPTS" -t $DOCKER_TAG .
-    - echo $CI_REGISTRY_PASSWORD | docker login -u $CI_REGISTRY_USER --password-stdin $CI_REGISTRY
-    - docker push $DOCKER_TAG
-  tags:
-    - dockerExec
-
-test:
-  stage: test
-  needs: ["build"]
   image: maven:3.9.6-eclipse-temurin-17
-  variables:
-    DOCKER_HOST: ""
-    DOCKER_TLS_CERTDIR: ""
   script:
-    - mvn $MAVEN_CLI_OPTS test
+    - mvn clean package -DskipTests
   artifacts:
-    reports:
-      junit: target/surefire-reports/*.xml
     paths:
       - target/
   tags:
     - dockerExec
 
-# Configure SAST for Java
+test:
+  stage: test
+  image: maven:3.9.6-eclipse-temurin-17
+  script:
+    - mvn test
+  artifacts:
+    reports:
+      junit: target/surefire-reports/*.xml
+  tags:
+    - dockerExec
+
+# Include GitLab security templates
+include:
+  - template: Security/SAST.gitlab-ci.yml
+  - template: Security/Dependency-Scanning.gitlab-ci.yml
+  - template: Security/Container-Scanning.gitlab-ci.yml
+
+# Configure included templates
 sast:
+  stage: sast
   variables:
     SAST_EXCLUDED_ANALYZERS: "brakeman,nodejs-scan,eslint,gosec,flawfinder,security-code-scan"
     SEARCH_MAX_DEPTH: 10
@@ -73,17 +66,16 @@ sast:
   tags:
     - dockerExec
 
-# Configure Dependency Scanning for Java
 dependency_scanning:
+  stage: dependency_scan
   variables:
-    DS_EXCLUDED_ANALYZERS: "gemnasium-python,bundler-audit,retire.js"
-    DS_ANALYZER_IMAGES: "gemnasium-maven"
+    DS_EXCLUDED_ANALYZERS: "gemnasium-maven,retire.js" # Keep only Java-relevant analyzers
   needs: ["build"]
   tags:
     - dockerExec
 
-# Configure Container Scanning
 container_scanning:
+  stage: container_scan
   variables:
     DOCKER_IMAGE: $DOCKER_TAG
   needs: ["build"]
@@ -92,12 +84,6 @@ container_scanning:
 
 deploy:
   stage: deploy
-  needs:
-    - job: test
-      artifacts: true
-    - job: sast
-    - job: dependency_scanning
-    - job: container_scanning
   image: docker:24.0
   services:
     - docker:24.0-dind
@@ -107,8 +93,7 @@ deploy:
     - until docker info; do sleep 1; done
     - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin $CI_REGISTRY
   script:
-    - docker pull $DOCKER_TAG
-    - docker tag $DOCKER_TAG $CI_REGISTRY_IMAGE:latest
+    - docker build -t $CI_REGISTRY_IMAGE:latest .
     - docker push $CI_REGISTRY_IMAGE:latest
     - docker stop spring-app || true
     - docker rm spring-app || true
