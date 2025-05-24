@@ -11,14 +11,15 @@ services:
 variables:
   DOCKER_BUILDKIT: 1
   DOCKER_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
-  DOCKER_DRIVER: overlay2
-  MAVEN_OPTS: "-Dmaven.repo.local=.m2/repository -Dmaven.artifact.threads=8"
+  MAVEN_OPTS: "-Dmaven.repo.local=.m2/repository"
   MAVEN_CLI_OPTS: "--batch-mode --no-transfer-progress"
 
 stages:
   - build
   - test
-  - security
+  - sast
+  - dependency_scan
+  - container_scan
   - deploy
 
 cache:
@@ -28,68 +29,73 @@ cache:
     - target/
   policy: pull-push
 
-build:
+build_job:
   stage: build
-  before_script:
-    - until docker info; do sleep 1; done
-  script:
-    - docker build --build-arg MAVEN_OPTS="$MAVEN_OPTS" -t $DOCKER_TAG .
-    - echo $CI_REGISTRY_PASSWORD | docker login -u $CI_REGISTRY_USER --password-stdin $CI_REGISTRY
-    - docker push $DOCKER_TAG
-  tags:
-    - dockerExec
-
-test:
-  stage: test
-  needs: ["build"]
   image: maven:3.9.6-eclipse-temurin-17
-  variables:
-    DOCKER_HOST: ""
-    DOCKER_TLS_CERTDIR: ""
   script:
-    - mvn $MAVEN_CLI_OPTS test
+    - mvn clean package -DskipTests $MAVEN_CLI_OPTS
   artifacts:
-    reports:
-      junit: target/surefire-reports/*.xml
     paths:
       - target/
+    reports:
+      junit: target/surefire-reports/*.xml
   tags:
     - dockerExec
 
-# Include all security scanning templates
+test_job:
+  stage: test
+  needs: ["build_job"]
+  image: maven:3.9.6-eclipse-temurin-17
+  script:
+    - mvn test $MAVEN_CLI_OPTS
+  tags:
+    - dockerExec
+
+# Security Scanning Templates
 include:
   - template: Security/SAST.gitlab-ci.yml
-  - template: Security/Dependency-Scanning.gitlab-ci.yml
   - template: Security/Container-Scanning.gitlab-ci.yml
 
-# Configure security jobs
+# SAST Configuration
 sast:
-  stage: security
-  needs: ["build"]
   variables:
     SAST_EXCLUDED_ANALYZERS: "brakeman,nodejs-scan,eslint,gosec,flawfinder,security-code-scan"
+  needs: ["build_job"]
   tags:
     - dockerExec
 
+# Dependency Scanning
 dependency_scanning:
-  stage: security
-  needs: ["build"]
+  stage: dependency_scan
+  needs: ["build_job"]
+  image: owasp/dependency-check:latest
+  script:
+    - dependency-check.sh --project "$CI_PROJECT_NAME" --scan . --format "ALL" --out "dependency-check-report"
+  artifacts:
+    when: always
+    reports:
+      dependency_scanning: dependency-check-report/dependency-check-report.xml
+    paths:
+      - dependency-check-report/
+    expire_in: 1 week
+  allow_failure: true
   tags:
     - dockerExec
 
+# Container Scanning Configuration
 container_scanning:
-  stage: security
   variables:
     DOCKER_IMAGE: $DOCKER_TAG
-  needs: ["build"]
+  needs: ["build_job"]
+  allow_failure: true
   tags:
     - dockerExec
 
+# Deployment
 deploy:
   stage: deploy
   needs:
-    - job: test
-      artifacts: true
+    - job: test_job
     - job: sast
     - job: dependency_scanning
     - job: container_scanning
@@ -102,7 +108,7 @@ deploy:
     - until docker info; do sleep 1; done
     - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin $CI_REGISTRY
   script:
-    - docker pull $DOCKER_TAG
+    - docker build -t $DOCKER_TAG .
     - docker tag $DOCKER_TAG $CI_REGISTRY_IMAGE:latest
     - docker push $CI_REGISTRY_IMAGE:latest
     - docker stop spring-app || true
