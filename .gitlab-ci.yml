@@ -76,22 +76,20 @@ scan:
 
 deploy:
   stage: deploy
+  image: docker:24.0
+  services:
+    - docker:24.0-dind
+  variables:
+    DOCKER_TLS_CERTDIR: ""
+  before_script:
+    - until docker info; do sleep 1; done
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin $CI_REGISTRY
+  script:
+    - docker pull $DOCKER_TAG
+    - docker tag $DOCKER_TAG $CI_REGISTRY_IMAGE:latest
+    - docker push $CI_REGISTRY_IMAGE:latest
+    - docker run -d --name spring-app -p 8080:8080 $CI_REGISTRY_IMAGE:latest
   only:
     - main
-  before_script:
-    - apk add --no-cache openssh-client
-    - mkdir -p ~/.ssh
-    - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
-    - chmod 600 ~/.ssh/id_rsa
-    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
-  script:
-    - |
-      ssh -o StrictHostKeyChecking=no "$SERVER_USER@$SERVER_IP" <<EOF
-        docker login -u '$CI_REGISTRY_USER' -p '$CI_REGISTRY_PASSWORD' '$CI_REGISTRY'
-        docker pull '$DOCKER_TAG'
-        (docker stop spring-app || true)
-        (docker rm spring-app || true)
-        docker run -d --name spring-app -p 8080:8080 '$DOCKER_TAG'
-      EOF
   tags:
     - dockerExec
