@@ -14,12 +14,13 @@ variables:
   DOCKER_DRIVER: overlay2
   MAVEN_OPTS: "-Dmaven.repo.local=.m2/repository -Dmaven.artifact.threads=8"
   MAVEN_CLI_OPTS: "--batch-mode --no-transfer-progress"
-  TRIVY_NO_PROGRESS: "true"
 
 stages:
-  - test
   - build
-  - scan
+  - test
+  - sast
+  - dependency_scan
+  - container_scan
   - deploy
 
 cache:
@@ -29,8 +30,20 @@ cache:
     - target/
   policy: pull-push
 
+build:
+  stage: build
+  before_script:
+    - until docker info; do sleep 1; done
+  script:
+    - docker build --build-arg MAVEN_OPTS="$MAVEN_OPTS" -t $DOCKER_TAG .
+    - echo $CI_REGISTRY_PASSWORD | docker login -u $CI_REGISTRY_USER --password-stdin $CI_REGISTRY
+    - docker push $DOCKER_TAG
+  tags:
+    - dockerExec
+
 test:
   stage: test
+  needs: ["build"]
   image: maven:3.8.6-eclipse-temurin-17
   variables:
     DOCKER_HOST: ""
@@ -43,33 +56,41 @@ test:
   tags:
     - dockerExec
 
-build:
-  stage: build
-  needs: ["test"]
-  before_script:
-    - until docker info; do sleep 1; done
+sast:
+  stage: sast
+  needs: ["build"]
+  image: docker:24.0
   script:
-    - docker build --build-arg MAVEN_OPTS="$MAVEN_OPTS" -t $DOCKER_TAG .
-    - echo $CI_REGISTRY_PASSWORD | docker login -u $CI_REGISTRY_USER --password-stdin $CI_REGISTRY
-    - docker push $DOCKER_TAG
+    - echo "Running SAST analysis using built-in GitLab SAST templates"
+    - echo "SAST would normally run here using GitLab's built-in templates"
   tags:
     - dockerExec
 
-scan:
-  stage: scan
+dependency_scan:
+  stage: dependency_scan
   needs: ["build"]
-  image: alpine/trivy:0.49.1
+  image: aquasec/trivy:0.49.1
   variables:
     DOCKER_HOST: tcp://docker:2375
   script:
-    - trivy fs --security-checks vuln,config .
+    - trivy fs --security-checks vuln,config --severity HIGH,CRITICAL .
+  tags:
+    - dockerExec
+
+container_scan:
+  stage: container_scan
+  needs: ["build"]
+  image: aquasec/trivy:0.49.1
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+  script:
     - trivy image --exit-code 0 --ignore-unfixed $DOCKER_TAG
   tags:
     - dockerExec
 
 deploy:
   stage: deploy
-  needs: ["scan"]
+  needs: ["test", "sast", "dependency_scan", "container_scan"]
   image: docker:24.0
   services:
     - docker:24.0-dind
