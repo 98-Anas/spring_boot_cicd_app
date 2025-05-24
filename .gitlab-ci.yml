@@ -17,8 +17,8 @@ variables:
   TRIVY_NO_PROGRESS: "true"
 
 stages:
-  - build
   - test
+  - build
   - scan
   - deploy
 
@@ -27,17 +27,7 @@ cache:
   paths:
     - .m2/repository
     - target/
-
-build:
-  stage: build
-  before_script:
-    - until docker info; do sleep 1; done
-  script:
-    - docker build -t $DOCKER_TAG .
-    - echo $CI_REGISTRY_PASSWORD | docker login -u $CI_REGISTRY_USER --password-stdin $CI_REGISTRY
-    - docker push $DOCKER_TAG
-  tags:
-    - dockerExec
+  policy: pull-push
 
 test:
   stage: test
@@ -47,35 +37,39 @@ test:
     DOCKER_TLS_CERTDIR: ""
   script:
     - mvn $MAVEN_CLI_OPTS test
-  cache:
-    key: "$CI_COMMIT_REF_SLUG"
+  artifacts:
     paths:
-      - .m2/repository
       - target/
-    policy: pull-push
+  tags:
+    - dockerExec
+
+build:
+  stage: build
+  needs: ["test"]
+  before_script:
+    - until docker info; do sleep 1; done
+  script:
+    - docker build --build-arg MAVEN_OPTS="$MAVEN_OPTS" -t $DOCKER_TAG .
+    - echo $CI_REGISTRY_PASSWORD | docker login -u $CI_REGISTRY_USER --password-stdin $CI_REGISTRY
+    - docker push $DOCKER_TAG
   tags:
     - dockerExec
 
 scan:
   stage: scan
-  image: docker:24.0
-  before_script:
-    - until docker info; do sleep 1; done
-    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
-    - docker pull "$DOCKER_TAG"
-    - wget -q https://github.com/aquasecurity/trivy/releases/download/v0.49.1/trivy_0.49.1_Linux-64bit.tar.gz
-    - tar -xzf trivy_0.49.1_Linux-64bit.tar.gz
-    - mv trivy /usr/local/bin/
+  needs: ["build"]
+  image: alpine/trivy:0.49.1
+  variables:
+    DOCKER_HOST: tcp://docker:2375
   script:
     - trivy fs --security-checks vuln,config .
-    - trivy image --exit-code 0 --ignore-unfixed "$DOCKER_TAG"
-  dependencies:
-    - build
+    - trivy image --exit-code 0 --ignore-unfixed $DOCKER_TAG
   tags:
     - dockerExec
 
 deploy:
   stage: deploy
+  needs: ["scan"]
   image: docker:24.0
   services:
     - docker:24.0-dind
@@ -88,6 +82,8 @@ deploy:
     - docker pull $DOCKER_TAG
     - docker tag $DOCKER_TAG $CI_REGISTRY_IMAGE:latest
     - docker push $CI_REGISTRY_IMAGE:latest
+    - docker stop spring-app || true
+    - docker rm spring-app || true
     - docker run -d --name spring-app -p 8080:8080 $CI_REGISTRY_IMAGE:latest
   only:
     - main
