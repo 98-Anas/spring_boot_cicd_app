@@ -51,20 +51,20 @@ test_job:
   tags:
     - dockerExec
 
-# Security Scanning Templates
+# Include security templates before defining jobs
 include:
   - template: Security/SAST.gitlab-ci.yml
   - template: Security/Container-Scanning.gitlab-ci.yml
 
-# SAST Configuration
+# Explicitly define sast job to ensure it exists
 sast:
+  stage: sast
+  needs: ["build_job"]
   variables:
     SAST_EXCLUDED_ANALYZERS: "brakeman,nodejs-scan,eslint,gosec,flawfinder,security-code-scan"
-  needs: ["build_job"]
   tags:
     - dockerExec
 
-# Dependency Scanning
 dependency_scanning:
   stage: dependency_scan
   needs: ["build_job"]
@@ -82,8 +82,8 @@ dependency_scanning:
   tags:
     - dockerExec
 
-# Container Scanning Configuration
 container_scanning:
+  stage: container_scan
   variables:
     DOCKER_IMAGE: $DOCKER_TAG
   needs: ["build_job"]
@@ -91,7 +91,6 @@ container_scanning:
   tags:
     - dockerExec
 
-# Deployment
 deploy:
   stage: deploy
   needs:
