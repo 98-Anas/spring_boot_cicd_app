@@ -78,18 +78,20 @@ deploy:
   stage: deploy
   only:
     - main
-  script:
+  before_script:
     - apk add --no-cache openssh-client
     - mkdir -p ~/.ssh
     - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
     - chmod 600 ~/.ssh/id_rsa
     - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
-    - ssh -o StrictHostKeyChecking=no "$SERVER_USER@$SERVER_IP" "
-        docker login -u '$CI_REGISTRY_USER' -p '$CI_REGISTRY_PASSWORD' '$CI_REGISTRY' &&
-        docker pull '$DOCKER_TAG' &&
-        (docker stop spring-app || true) &&
-        (docker rm spring-app || true) &&
+  script:
+    - |
+      ssh -o StrictHostKeyChecking=no "$SERVER_USER@$SERVER_IP" <<EOF
+        docker login -u '$CI_REGISTRY_USER' -p '$CI_REGISTRY_PASSWORD' '$CI_REGISTRY'
+        docker pull '$DOCKER_TAG'
+        (docker stop spring-app || true)
+        (docker rm spring-app || true)
         docker run -d --name spring-app -p 8080:8080 '$DOCKER_TAG'
-      "
+      EOF
   tags:
     - dockerExec
