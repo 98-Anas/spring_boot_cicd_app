@@ -12,7 +12,7 @@ variables:
   DOCKER_BUILDKIT: 1
   DOCKER_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
   DOCKER_DRIVER: overlay2
-  MAVEN_OPTS: "-Dmaven.repo.local=.m2/repository"
+  MAVEN_OPTS: "-Dmaven.repo.local=.m2/repository -Dmaven.artifact.threads=8"
   MAVEN_CLI_OPTS: "--batch-mode --no-transfer-progress"
   TRIVY_NO_PROGRESS: "true"
   TRIVY_TIMEOUT: "5m"
@@ -41,12 +41,15 @@ build:
         -t $DOCKER_TAG .
     - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
     - docker push "$DOCKER_TAG"
+  artifacts:
+    paths:
+      - target/
   tags:
     - dockerExec
 
 test:
   stage: test
-  image: maven:3.9.6-eclipse-temurin-17
+  image: maven:3.8.6-eclipse-temurin-17
   variables:
     DOCKER_HOST: ""
     DOCKER_TLS_CERTDIR: ""
@@ -58,11 +61,12 @@ test:
       - .m2/repository
       - target/
     policy: pull-push
-  artifacts:
-    paths:
-      - target/
   tags:
     - dockerExec
+
+include:
+  - template: Security/SAST.gitlab-ci.yml
+  - template: Security/Container-Scanning.gitlab-ci.yml
 
 scan:
   stage: scan
@@ -73,6 +77,7 @@ scan:
     - until docker info; do sleep 1; done
     - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
     - docker pull "$DOCKER_TAG"
+    # Install Trivy only if not cached
     - if [ ! -f "/usr/local/bin/trivy" ]; then
         wget -q https://github.com/aquasecurity/trivy/releases/download/v0.49.1/trivy_0.49.1_Linux-64bit.tar.gz -O trivy.tar.gz &&
         tar -xzf trivy.tar.gz &&
@@ -81,7 +86,9 @@ scan:
       fi
     - mkdir -p "$TRIVY_CACHE_DIR"
   script:
+    # Focused filesystem scan
     - trivy fs --security-checks vuln --skip-files "**/test/**,**/target/**" --cache-dir "$TRIVY_CACHE_DIR" .
+    # Fast image scan
     - trivy image --timeout "$TRIVY_TIMEOUT" --ignore-unfixed --exit-code 0 \
                  --scanners vuln \
                  --skip-files "**/test/**,**/target/**" \
@@ -91,11 +98,6 @@ scan:
     - build
   tags:
     - dockerExec
-
-include:
-  - template: Security/Dependency-Scanning.gitlab-ci.yml
-  - template: Security/SAST.gitlab-ci.yml
-  - template: Security/Container-Scanning.gitlab-ci.yml
 
 deploy:
   stage: deploy
