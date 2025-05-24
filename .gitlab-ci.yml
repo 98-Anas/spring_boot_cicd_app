@@ -12,6 +12,7 @@ variables:
   DOCKER_BUILDKIT: 1
   DOCKER_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
   DOCKER_DRIVER: overlay2
+  MAVEN_OPTS: "-Dmaven.repo.local=.m2/repository"
 
 stages:
   - build
@@ -19,19 +20,18 @@ stages:
   - scan
   - deploy
 
-before_script:
-  - until docker info; do sleep 1; done  # Wait for Docker daemon
-
 cache:
   paths:
     - .m2/repository
+    - target/
 
 build:
   stage: build
+  before_script:
+    - until docker info; do sleep 1; done
   script:
-    - docker info  # Verify Docker connection
     - docker build -t $DOCKER_TAG .
-    - echo "$CI_REGISTRY_PASSWORD" | docker login -u $CI_REGISTRY_USER --password-stdin $CI_REGISTRY
+    - echo $CI_REGISTRY_PASSWORD | docker login -u $CI_REGISTRY_USER --password-stdin $CI_REGISTRY
     - docker push $DOCKER_TAG
   tags:
     - dockerExec
@@ -39,8 +39,15 @@ build:
 test:
   stage: test
   image: maven:3.8.6-eclipse-temurin-17
+  variables:
+    DOCKER_HOST: ""  # Clear Docker variables for test stage
+    DOCKER_TLS_CERTDIR: ""
   script:
-    - mvn test
+    - mvn --batch-mode test
+  cache:
+    paths:
+      - .m2/repository
+      - target/
   tags:
     - dockerExec
 
@@ -48,8 +55,10 @@ scan:
   stage: scan
   image: aquasec/trivy:latest
   script:
-    - trivy fs --security-checks vuln,config .
-    - trivy image --exit-code 0 --ignore-unfixed $DOCKER_TAG
+    - trivy fs --security-checks vuln,config --no-progress .
+    - trivy image --exit-code 0 --ignore-unfixed --no-progress $DOCKER_TAG
+  dependencies:
+    - build
   tags:
     - dockerExec
 
@@ -58,6 +67,10 @@ deploy:
   only:
     - main
   script:
-    - ssh $SERVER_USER@$SERVER_IP "docker pull $DOCKER_TAG && docker run -d -p 8080:8080 $DOCKER_TAG"
+    - apk add --no-cache openssh-client
+    - mkdir -p ~/.ssh
+    - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    - ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_IP "docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY && docker pull $DOCKER_TAG && docker stop spring-app || true && docker rm spring-app || true && docker run -d --name spring-app -p 8080:8080 $DOCKER_TAG"
   tags:
     - dockerExec
