@@ -13,6 +13,7 @@ variables:
   DOCKER_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
   DOCKER_DRIVER: overlay2
   MAVEN_OPTS: "-Dmaven.repo.local=.m2/repository"
+  TRIVY_NO_PROGRESS: "true"
 
 stages:
   - build
@@ -40,7 +41,7 @@ test:
   stage: test
   image: maven:3.8.6-eclipse-temurin-17
   variables:
-    DOCKER_HOST: ""  # Clear Docker variables for test stage
+    DOCKER_HOST: ""
     DOCKER_TLS_CERTDIR: ""
   script:
     - mvn --batch-mode test
@@ -53,10 +54,12 @@ test:
 
 scan:
   stage: scan
-  image: aquasec/trivy:latest
+  image:
+    name: aquasec/trivy:latest
+    entrypoint: [""]  # Disable the default entrypoint
   script:
-    - trivy fs --security-checks vuln,config --no-progress .
-    - trivy image --exit-code 0 --ignore-unfixed --no-progress $DOCKER_TAG
+    - trivy fs --security-checks vuln,config .
+    - trivy image --exit-code 0 --ignore-unfixed $DOCKER_TAG
   dependencies:
     - build
   tags:
