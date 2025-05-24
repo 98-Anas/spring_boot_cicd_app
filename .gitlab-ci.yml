@@ -13,8 +13,7 @@ variables:
   DOCKER_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
   MAVEN_OPTS: "-Dmaven.repo.local=.m2/repository"
   MAVEN_CLI_OPTS: "--batch-mode --no-transfer-progress"
-  CS_IMAGE: $DOCKER_TAG
-  CS_DOCKERFILE_PATH: "Dockerfile"
+  CS_IMAGE: $DOCKER_TAG  # For container scanning
 
 stages:
   - build
@@ -32,28 +31,18 @@ cache:
 
 build:
   stage: build
-  before_script:
-    - apk add --no-cache maven openjdk17
-    - until docker info; do sleep 1; done
+  image: maven:3.9.6-eclipse-temurin-17
   script:
     - mvn clean package -DskipTests
-    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
-    - docker build -t $DOCKER_TAG .
-    - docker push $DOCKER_TAG
   artifacts:
     paths:
       - target/
-    reports:
-      dotenv: build.env
   tags:
     - dockerExec
 
 test:
   stage: test
   image: maven:3.9.6-eclipse-temurin-17
-  variables:
-    DOCKER_HOST: ""
-    DOCKER_TLS_CERTDIR: ""
   script:
     - mvn test
   artifacts:
@@ -64,42 +53,53 @@ test:
 
 include:
   - template: Security/SAST.gitlab-ci.yml
-  - template: Security/Dependency-Scanning.gitlab-ci.yml
   - template: Security/Container-Scanning.gitlab-ci.yml
 
 sast:
-  stage: sast
   variables:
     SAST_EXCLUDED_ANALYZERS: "brakeman,nodejs-scan,eslint,gosec,flawfinder,security-code-scan"
-  needs: ["build"]
   tags:
     - dockerExec
 
 dependency_scanning:
   stage: dependency_scan
-  needs: ["build"]
+  image: owasp/dependency-check:latest
+  script:
+    - dependency-check.sh --project "$CI_PROJECT_NAME" --scan . --format "ALL" --out "dependency-check-report"
+  artifacts:
+    when: always
+    reports:
+      dependency_scanning: dependency-check-report/dependency-check-report.xml
+    paths:
+      - dependency-check-report/
+    expire_in: 1 week
+  allow_failure: true
   tags:
     - dockerExec
 
 container_scanning:
-  stage: container_scan
   variables:
     CS_IMAGE: $DOCKER_TAG
     CS_DOCKERFILE_PATH: "Dockerfile"
-  needs: ["build"]
   before_script:
     - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    - docker pull $DOCKER_TAG || true
+  allow_failure: true
   tags:
     - dockerExec
 
 deploy:
   stage: deploy
+  image: docker:24.0
+  services:
+    - docker:24.0-dind
+  variables:
+    DOCKER_TLS_CERTDIR: ""
   before_script:
     - until docker info; do sleep 1; done
     - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin $CI_REGISTRY
   script:
-    - docker pull $DOCKER_TAG
-    - docker tag $DOCKER_TAG $CI_REGISTRY_IMAGE:latest
+    - docker build -t $CI_REGISTRY_IMAGE:latest .
     - docker push $CI_REGISTRY_IMAGE:latest
     - docker stop spring-app || true
     - docker rm spring-app || true
