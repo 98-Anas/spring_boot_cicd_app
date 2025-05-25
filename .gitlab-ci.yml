@@ -55,6 +55,7 @@ test:
 # Stage 4: Security scans (run in parallel)
 include:
   - template: Security/SAST.gitlab-ci.yml
+  - template: Security/Container-Scanning.gitlab-ci.yml
 
 sast:
   stage: security_scan
@@ -77,9 +78,6 @@ dependency_scan:
   allow_failure: true
   tags:
     - dockerExec
-
-include:
-  - template: Security/Container-Scanning.gitlab-ci.yml
 
 container_scanning:
   stage: security_scan
