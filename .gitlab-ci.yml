@@ -15,7 +15,7 @@ cache:
     - target/
 
 # Stage 1: Build Java application
-maven_build:
+build:
   stage: build
   image: maven:3.9.6-eclipse-temurin-17
   script:
@@ -26,57 +26,76 @@ maven_build:
   tags:
     - dockerExec
 
-# Stage 2: Build and push Docker image
-docker_build:
+# Stage 2: Package into Docker image (runs parallel with test)
+package:
   stage: package
+  needs: ["build"]
   image: docker:24.0
   services:
     - docker:24.0-dind
   variables:
     DOCKER_TLS_CERTDIR: ""
-    DOCKER_HOST: tcp://docker:2375
   script:
     - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
     - docker build -t $DOCKER_TAG .
     - docker push $DOCKER_TAG
-  needs: ["maven_build"]
   tags:
     - dockerExec
 
-# Stage 3: Run tests
+# Stage 3: Run tests (runs parallel with package)
 test:
   stage: test
+  needs: ["build"]
   image: maven:3.9.6-eclipse-temurin-17
   script:
     - mvn test
-  needs: ["maven_build"]
   tags:
     - dockerExec
 
-# Security scans (run in parallel)
+# Stage 4: Security scans (run in parallel)
 include:
   - template: Security/SAST.gitlab-ci.yml
-  - template: Security/Container-Scanning.gitlab-ci.yml
 
 sast:
   stage: security_scan
+  needs: ["package"]
   variables:
     SAST_EXCLUDED_ANALYZERS: "brakeman,nodejs-scan,eslint,gosec,flawfinder,security-code-scan"
-  needs: ["maven_build"]
   tags:
     - dockerExec
+
+dependency_scan:
+  stage: security_scan
+  needs: ["build"]
+  image: owasp/dependency-check:latest
+  script:
+    - dependency-check.sh --project "$CI_PROJECT_NAME" --scan . --format "ALL"
+  artifacts:
+    when: always
+    paths:
+      - dependency-check-report.html
+  allow_failure: true
+  tags:
+    - dockerExec
+
+include:
+  - template: Security/Container-Scanning.gitlab-ci.yml
 
 container_scanning:
   stage: security_scan
+  needs: ["package"]
   variables:
     CS_IMAGE: $DOCKER_TAG
-  needs: ["docker_build"]
   tags:
     - dockerExec
 
-# Deployment
+# Stage 5: Deployment
 deploy:
   stage: deploy
+  needs:
+    - job: test
+    - job: sast
+    - job: container_scanning
   image: docker:24.0
   services:
     - docker:24.0-dind
@@ -92,6 +111,5 @@ deploy:
     - docker run -d --name myapp -p 8080:8080 $CI_REGISTRY_IMAGE:latest
   only:
     - main
-  needs: ["test", "sast", "container_scanning"]
   tags:
     - dockerExec
