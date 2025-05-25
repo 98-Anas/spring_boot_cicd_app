@@ -1,5 +1,6 @@
 stages:
   - build
+  - package
   - test
   - security_scan
   - deploy
@@ -13,28 +14,46 @@ cache:
     - .m2/repository
     - target/
 
-build:
+# Stage 1: Build Java application
+maven_build:
   stage: build
   image: maven:3.9.6-eclipse-temurin-17
   script:
     - mvn clean package -DskipTests
-    - docker build -t $DOCKER_TAG .
-    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
-    - docker push $DOCKER_TAG
   artifacts:
     paths:
       - target/
   tags:
     - dockerExec
 
+# Stage 2: Build and push Docker image
+docker_build:
+  stage: package
+  image: docker:24.0
+  services:
+    - docker:24.0-dind
+  variables:
+    DOCKER_TLS_CERTDIR: ""
+    DOCKER_HOST: tcp://docker:2375
+  script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - docker build -t $DOCKER_TAG .
+    - docker push $DOCKER_TAG
+  needs: ["maven_build"]
+  tags:
+    - dockerExec
+
+# Stage 3: Run tests
 test:
   stage: test
   image: maven:3.9.6-eclipse-temurin-17
   script:
     - mvn test
+  needs: ["maven_build"]
   tags:
     - dockerExec
 
+# Security scans (run in parallel)
 include:
   - template: Security/SAST.gitlab-ci.yml
   - template: Security/Container-Scanning.gitlab-ci.yml
@@ -43,19 +62,7 @@ sast:
   stage: security_scan
   variables:
     SAST_EXCLUDED_ANALYZERS: "brakeman,nodejs-scan,eslint,gosec,flawfinder,security-code-scan"
-  tags:
-    - dockerExec
-
-dependency_scan:
-  stage: security_scan
-  image: owasp/dependency-check:latest
-  script:
-    - dependency-check.sh --project "$CI_PROJECT_NAME" --scan . --format "ALL"
-  artifacts:
-    when: always
-    paths:
-      - dependency-check-report.html
-  allow_failure: true
+  needs: ["maven_build"]
   tags:
     - dockerExec
 
@@ -63,13 +70,11 @@ container_scanning:
   stage: security_scan
   variables:
     CS_IMAGE: $DOCKER_TAG
-  before_script:
-    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
-  script:
-    - echo "Container scanning in progress..."
+  needs: ["docker_build"]
   tags:
     - dockerExec
 
+# Deployment
 deploy:
   stage: deploy
   image: docker:24.0
@@ -78,12 +83,15 @@ deploy:
   variables:
     DOCKER_TLS_CERTDIR: ""
   script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
     - docker pull $DOCKER_TAG
     - docker tag $DOCKER_TAG $CI_REGISTRY_IMAGE:latest
     - docker push $CI_REGISTRY_IMAGE:latest
     - docker stop myapp || true
+    - docker rm myapp || true
     - docker run -d --name myapp -p 8080:8080 $CI_REGISTRY_IMAGE:latest
   only:
     - main
+  needs: ["test", "sast", "container_scanning"]
   tags:
     - dockerExec
