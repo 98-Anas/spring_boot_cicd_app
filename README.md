@@ -11,7 +11,7 @@ This project implements a secure and automated CI/CD pipeline for a Spring Boot 
 ---
 
 ## **Pipeline Architecture**  
-![image](https://github.com/user-attachments/assets/1e63927d-d6f6-4c78-becf-9d28cc3aa2fc)
+![mermaid_pipeline](https://github.com/user-attachments/assets/c15957cb-f6d9-4963-840f-ce4b6e216d82)
 
 
 
@@ -116,7 +116,9 @@ A: Store credentials in **GitLab CI Variables** (Settings > CI/CD > Variables).
 ## **Pipeline Diagram**
 Succeeded Pipeline & RepoLink:
 https://gitlab.com/fawry-intern1/anas_ayman_elgalad/spring_boot_project  
-![image](https://github.com/user-attachments/assets/1841ca32-c6e2-42d6-a436-eb5c64e28254)
+![pipeline](https://github.com/user-attachments/assets/ebf3e25a-720b-4ebd-bf6c-b576f7ad08e4)
+
+
 
 ---
 
